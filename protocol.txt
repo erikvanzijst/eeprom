@@ -1,0 +1,90 @@
+Protocol
+
+The protocol between the Python client and Arduino is a synchronous request
+response based system. The client initiates all communication, one request
+at a time.
+
+Each request yields a response from the Arduino which must be consumed fully
+before the next request can be sent.
+
+Each request is packed into a structured binary envelope consisting of a
+leading octet indicating the length of the message (excluding the leading
+octet), followed by a single octet describing the command that is to be
+executed by the Arduino, followed by 0 up to and including 253 bytes of
+command-specific payload data:
+
+   0                   1                   2                   3
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |     Length    |    Command    |              Data             |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+The following commands are defined:
+
+1. Read
+
+Command byte: 'r' (0x72 / ASCII 114)
+Data: 16 bit address in network byte order. Since the AT28C256 has only 15
+address lines, only the 15 lower bits are used. The leading, MSB is unused.
+
+   0                   1                   2                   3
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |        3      |       'r'     |0|      15 bit address         |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+The response is a single byte containing the value at the specified address,
+without header or delimiter.
+
+2. Write
+
+Command byte: 'w' (0x77 / ASCII 119)
+Data: 3 bytes, broken down as follows: 2 bytes containing a 15 bit address
+in network byte order, followed by one octet of data to be written to the
+specified address.
+
+   0                   1                   2                   3
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |        4      |       'w'     |0|      15 bit address         |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |      Data     |
+  +-+-+-+-+-+-+-+-+
+
+The response is a single 0 byte to indicate the operation finished and a new
+command can be sent.
+
+3. Dump
+
+Command byte: 'd' (0x64 / ASCII 100)
+Data: No payload following the command byte.
+
+   0                   1
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |        0      |       'd'     |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+The response is the raw contents of the entire EEPROM. This is exactly 32KB
+of raw data without header or delimiter. The response is done after the
+32768th byte.
+
+4. Load
+
+Command byte: 'l' (0x6C / ASCII 108)
+Data: 2 bytes indicating the size of the upload that follows the request
+message. Since the AT28C256 has only 15 address lines, only the lower 15 bits
+are used. The leading, MSB is ignored.
+
+   0                   1                   2                   3
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |        3      |       'l'     |0|       15 bit length         |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+Directly following the command message is the stream of bytes to be uploaded
+to the EEPROM. Writing always begins at address 0. The length of the stream
+must match the length advertised in the command message.
+
+The response is a single 0 byte to indicate the operation finished and a new
+command can be sent.
