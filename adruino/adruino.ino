@@ -41,6 +41,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+const unsigned int DELAY_US = 1;
 
 // AT28C256 contol lines
 const unsigned int EEPROM_CE = A0;
@@ -81,7 +82,7 @@ void setup() {
 
 void pulse(int pin) {
   digitalWrite(pin, HIGH);
-  delayMicroseconds(1);
+  delayMicroseconds(DELAY_US);
   digitalWrite(pin, LOW);
 }
 
@@ -98,6 +99,7 @@ void loadShiftAddr(unsigned int addr) {
 
 void readAddr(unsigned int addr) {
   loadShiftAddr(addr);
+  delayMicroseconds(DELAY_US);
 
   byte val = 0;
   for (unsigned int i = 0; i < 8; i++) {
@@ -113,13 +115,7 @@ void writeAddr(unsigned int addr, byte val) {
 
 void dump() {
   for (unsigned int addr = 0; addr < 32768; addr++) {
-    byte val = 0;
-    loadShiftAddr(addr);
-    delayMicroseconds(1);
-    for (unsigned int i = 0; i < 8; i++) {
-      val |= (digitalRead(dataPins[i]) << i);
-    }
-    Serial.write(val);
+    readAddr(addr);
   }
 }
 
