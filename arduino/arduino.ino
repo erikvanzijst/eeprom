@@ -41,6 +41,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+enum MODE {READ, WRITE};
 const unsigned int DELAY_US = 1;
 
 // AT28C256 contol lines
@@ -56,8 +57,10 @@ const unsigned int SHIFT_SCLK = 12;
 // Activity indicator LED
 const unsigned int ACT_LED = 13;
 
+// Data pins (LSB to MSB)
 const unsigned int dataPins[] = {2, 3, 4, 5, 6, 7, 8, 9};
 
+MODE mode = NULL;
 unsigned int len;
 byte buf[4];
 
@@ -75,9 +78,7 @@ void setup() {
   pinMode(ACT_LED, OUTPUT);
   digitalWrite(ACT_LED, LOW);
 
-  for (unsigned int i = 0; i < 8; i++) {
-    pinMode(dataPins[i], INPUT);
-  }
+  readMode();
 }
 
 void pulse(int pin) {
@@ -109,7 +110,24 @@ void readAddr(unsigned int addr) {
   Serial.write(val);
 }
 
+/*
+ * Writes a single byte to the specified addess.
+ * Requires IO0-IO7 to be set to OUTPUT mode, EEPROM_CE to be LOW and EEPROM_OE
+ * to be HIGH prior to invocation.
+ */
 void writeAddr(unsigned int addr, byte val) {
+  loadShiftAddr(addr);
+
+  // load data byte
+  for (unsigned int i = 0; i < 8; i++) {
+    digitalWrite(dataPins[i], (val >> i) & 1);
+  }
+  delayMicroseconds(1);
+
+  digitalWrite(EEPROM_WE, LOW);
+  delayMicroseconds(1);
+  digitalWrite(EEPROM_WE, HIGH);
+
   Serial.write(0);
 }
 
@@ -120,6 +138,42 @@ void dump() {
 }
 
 void load() {
+}
+
+/*
+ * Switches the pin mode for the I/O pins to OUTPUT, pulls EEPROM_CE LOW and
+ * EEPROM_OE HIGH.
+ */
+void writeMode() {
+  if (mode != WRITE) {
+    digitalWrite(EEPROM_CE, LOW);
+    digitalWrite(EEPROM_OE, HIGH);
+    digitalWrite(EEPROM_WE, HIGH);
+
+    for (unsigned int i = 0; i < 8; i++) {
+      pinMode(dataPins[i], OUTPUT);
+    }
+
+    mode = WRITE;
+  }
+}
+
+/**
+ * Switches the pin mode for the I/O pins to INPUT, pulls EEPROM_CE LOW,
+ * EEPROM_OE LOW and EEPROM_WE HIGH.
+ */
+void readMode() {
+  if (mode != READ) {
+    digitalWrite(EEPROM_CE, LOW);
+    digitalWrite(EEPROM_OE, LOW);
+    digitalWrite(EEPROM_WE, HIGH);
+
+    for (unsigned int i = 0; i < 8; i++) {
+      pinMode(dataPins[i], INPUT);
+    }
+
+    mode = READ;
+  }
 }
 
 void loop() {
@@ -133,13 +187,17 @@ void loop() {
         readAddr((buf[1] << 8) + buf[2]);
 
     } else if (buf[0] == 0x77 && len == 4) {
+        writeMode();
         writeAddr((buf[1] << 8) + buf[2], buf[3]);
+        readMode();
       
     } else if (buf[0] == 0x64 && len == 1) {
         dump();
       
     } else if (buf[0] == 0x6c && len == 3) {
+        writeMode();
         load();
+        readMode();
 
     } else {
       for (int i = 0; i < 5; i++) {
