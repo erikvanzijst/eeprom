@@ -15,6 +15,9 @@
 # limitations under the License.
 
 import argparse
+import atexit
+import os
+import readline
 import sys
 from struct import pack
 
@@ -41,7 +44,7 @@ def read(port: Serial, addr: str) -> None:
 
 def write(port: Serial, addr: str, val: str) -> None:
     port.write(pack('>BcHB', 4, b'w', atoi(addr), atoi(val)))
-    print(port.read(1))
+    port.read(1)
     print('OK')
 
 
@@ -54,6 +57,26 @@ def dump(port: Serial, filename: str) -> None:
             f.flush()
             if i % 100 == 0:
                 print('\r%d%%' % ((i / 2**15) * 100), end='')
+
+    # wait for Adruino to signal completion
+    port.read(1)
+    print('\nComplete.')
+
+
+def load(port: Serial, filename: str) -> None:
+    with open(filename, 'rb') as f:
+        len = min(0x8000, os.fstat(f.fileno()).st_size)
+        print('Loading %d bytes of %s into EEPROM...' % (len, filename))
+        port.write(pack('>BcH', 3, b'l', len))
+
+        for i in range(len):
+            port.write(f.read(1))
+            port.flush()
+            if i % 100 == 0:
+                print('\r%d%%' % ((i / len) * 100), end='')
+
+    # wait for Adruino to signal completion
+    port.read(1)
     print('\nComplete.')
 
 
@@ -65,7 +88,7 @@ if __name__ == '__main__':
     usage = """AT28C256 EEPROM Programmer
 
 Read or write individual addresses, dump out the full contents to a file, or\
-load an image file onto the ERPROM.
+load an image file onto the EEPROM.
 
 To read a single byte:
 > [r|read] [addr]
@@ -101,8 +124,18 @@ Address supports hex (0xFF) and octal (0o7) notation.
                   'manually.', file=sys.stderr)
             exit(1)
 
-    port = Serial(dev, 19200, timeout=3)
+    port = Serial(dev, 9600, timeout=3)
     print(usage)
+
+    histfile = os.path.join(os.path.expanduser("~"), ".eeprom_history")
+    try:
+        readline.read_history_file(histfile)
+        # default history len is -1 (infinite), which may grow unruly
+        readline.set_history_length(1000)
+    except FileNotFoundError:
+        pass
+
+    atexit.register(readline.write_history_file, histfile)
     while True:
         try:
             expr = input('> ').split()
@@ -112,6 +145,8 @@ Address supports hex (0xFF) and octal (0o7) notation.
              'write': write,
              'd': dump,
              'dump': dump,
+             'l': load,
+             'load': load,
              'quit': quit,
              'q': quit}[expr[0]](port, *expr[1:])
 

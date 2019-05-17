@@ -42,6 +42,7 @@
  * limitations under the License.
  */
 enum MODE {READ, WRITE};
+const unsigned int MAX_PAYLOAD = 63;
 const unsigned int DELAY_US = 1;
 
 // AT28C256 contol lines
@@ -61,11 +62,11 @@ const unsigned int ACT_LED = 13;
 const unsigned int dataPins[] = {2, 3, 4, 5, 6, 7, 8, 9};
 
 MODE mode = NULL;
-unsigned int len;
-byte buf[4];
+byte buf[1 + MAX_PAYLOAD];
 
 void setup() {
-  Serial.begin(19200);
+  Serial.begin(9600);
+//  Serial.setTimeout(60l * 1000);
 
   pinMode(EEPROM_CE, OUTPUT);
   pinMode(EEPROM_OE, OUTPUT);
@@ -81,10 +82,44 @@ void setup() {
   readMode();
 }
 
+/*
+ * Reads the next message from the serial port and copies its payload into
+ * the global `buf` byte array.
+ * This function does not send any acknowledgements which is left to the
+ * caller.
+ *
+ * Returns the number of bytes that were copied into `buf` (0 for acks).
+ */
+int receive() {
+  int l = Serial.read();
+  if (l > 0) {
+    Serial.readBytes(buf, min(l, sizeof(buf)));
+  }
+  return l;
+}
+
+/*
+ * Writes the supplied bytes to the serial port, preceeding it with a length
+ * octet.
+ *
+ * This function enforces flow control, blocking until the client has
+ * acknowledged receipt with a 0-byte ack.
+ */
+void send(byte *buf, unsigned int len, bool waitForAck) {
+  Serial.write(len);
+  if (len > 0) {
+    Serial.write(buf, len);
+  }
+  if (waitForAck && receive() != 0) {
+    error();
+  }
+}
+
 void pulse(int pin) {
   digitalWrite(pin, HIGH);
   delayMicroseconds(DELAY_US);
   digitalWrite(pin, LOW);
+  delayMicroseconds(DELAY_US);
 }
 
 /*
@@ -98,7 +133,10 @@ void loadShiftAddr(unsigned int addr) {
   pulse(SHIFT_RCLK);
 }
 
-void readAddr(unsigned int addr) {
+/*
+ * Returns the byte at the specified address.
+ */
+byte readAddr(unsigned int addr) {
   loadShiftAddr(addr);
   delayMicroseconds(DELAY_US);
 
@@ -106,8 +144,7 @@ void readAddr(unsigned int addr) {
   for (unsigned int i = 0; i < 8; i++) {
     val |= (digitalRead(dataPins[i]) << i);
   }
-
-  Serial.write(val);
+  return val;
 }
 
 /*
@@ -122,22 +159,54 @@ void writeAddr(unsigned int addr, byte val) {
   for (unsigned int i = 0; i < 8; i++) {
     digitalWrite(dataPins[i], (val >> i) & 1);
   }
-  delayMicroseconds(1);
+  delayMicroseconds(DELAY_US);
 
   digitalWrite(EEPROM_WE, LOW);
-  delayMicroseconds(1);
+  delayMicroseconds(DELAY_US);
   digitalWrite(EEPROM_WE, HIGH);
-
-  Serial.write(0);
 }
 
+/*
+ * Writes the full contents of the EEPROM to the serial port in sequential
+ * messages of up to 63 bytes, waiting for explicit acknowledgement of each.
+ */
 void dump() {
+  byte payload[MAX_PAYLOAD];
+  unsigned int i = 0;
+
   for (unsigned int addr = 0; addr < 32768; addr++) {
-    readAddr(addr);
+    i = addr % MAX_PAYLOAD;
+
+    if (addr > 0 && i == 0) {
+      // payload at capacity, send out:
+      send(buf, MAX_PAYLOAD, true);
+    }
+    payload[i++] = readAddr(addr);
+  }
+
+  if (i) {
+    // send remainder
+    send(buf, i, true);
   }
 }
 
-void load() {
+/*
+ * Reads the specified number of bytes from the serial port and writes them
+ * to the EEPROM.
+ * 
+ * This requires the Arduino to be in WRITE mode.
+ */
+void load(unsigned int len) {
+  unsigned int addr = 0;
+
+  while (addr < len) {
+    unsigned int cnt = receive();
+    send(NULL, 0, true);
+
+    for (unsigned int i = 0; i < cnt; i++) {
+      writeAddr(addr++, buf[i]);
+    }
+  }
 }
 
 /*
@@ -176,19 +245,30 @@ void readMode() {
   }
 }
 
+void error() {
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(ACT_LED, LOW);
+    delay(100);
+    digitalWrite(ACT_LED, HIGH);
+    delay(100);
+  }
+}
+
 void loop() {
   if (Serial.available() > 0) {
     digitalWrite(ACT_LED, HIGH);
 
-    len = Serial.read();
-    Serial.readBytes(buf, len);
+    unsigned int len = receive();
 
     if (buf[0] == 0x72 && len == 3) {
-        readAddr((buf[1] << 8) + buf[2]);
+      byte val = readAddr((buf[1] << 8) + buf[2]);
+      send(&val, 1, false);
 
     } else if (buf[0] == 0x77 && len == 4) {
         writeMode();
         writeAddr((buf[1] << 8) + buf[2], buf[3]);
+        // signal operation completion
+        send(NULL, 0, false);
         readMode();
       
     } else if (buf[0] == 0x64 && len == 1) {
@@ -196,16 +276,11 @@ void loop() {
       
     } else if (buf[0] == 0x6c && len == 3) {
         writeMode();
-        load();
+        load((buf[1] << 8) + buf[2]);
         readMode();
 
     } else {
-      for (int i = 0; i < 5; i++) {
-        digitalWrite(ACT_LED, LOW);
-        delay(200);
-        digitalWrite(ACT_LED, HIGH);
-        delay(200);
-      }
+      error();
     }
     digitalWrite(ACT_LED, LOW);
   }

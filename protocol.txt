@@ -10,7 +10,7 @@ before the next request can be sent.
 Each request is packed into a structured binary envelope consisting of a
 leading octet indicating the length of the message (excluding the leading
 octet), followed by a single octet describing the command that is to be
-executed by the Arduino, followed by 0 up to and including 253 bytes of
+executed by the Arduino, followed by 0 up to and including 62 bytes of
 command-specific payload data:
 
    0                   1                   2                   3
@@ -19,9 +19,13 @@ command-specific payload data:
   |     Length    |    Command    |              Data             |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+
+1. Command Messages
+
 The following commands are defined:
 
-1. Read
+
+1.1 Read
 
 Command byte: 'r' (0x72 / ASCII 114)
 Data: 16 bit address in network byte order. Since the AT28C256 has only 15
@@ -33,10 +37,17 @@ address lines, only the 15 lower bits are used. The leading, MSB is unused.
   |        3      |       'r'     |0|      15 bit address         |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-The response is a single byte containing the value at the specified address,
-without header or delimiter.
+The response is a message containing the value at the specified address:
 
-2. Write
+   0                   1
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |        1      |     value     |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+
+
+1.2. Write
 
 Command byte: 'w' (0x77 / ASCII 119)
 Data: 3 bytes, broken down as follows: 2 bytes containing a 15 bit address
@@ -51,10 +62,12 @@ specified address.
   |      Data     |
   +-+-+-+-+-+-+-+-+
 
-The response is a single 0 byte to indicate the operation finished and a new
-command can be sent.
+The response is an acknowledgement message to indicate the operation finished
+and a new command can be sent. An acknowledgement message is defined as a
+single 0-byte.
 
-3. Dump
+
+1.3. Dump
 
 Command byte: 'd' (0x64 / ASCII 100)
 Data: No payload following the command byte.
@@ -65,11 +78,20 @@ Data: No payload following the command byte.
   |        1      |       'd'     |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-The response is the raw contents of the entire EEPROM. This is exactly 32KB
-of raw data without header or delimiter. The response is done after the
-32768th byte.
+The response is the raw contents of the entire EEPROM. This is returned as a
+sequence of messages each starting with a length octet, followed by up to 63
+bytes of raw payload data.
 
-4. Load
+Each message is explicitly and synchronously acknowledged by the client using
+a 0-byte acknowledgement message before the next message is sent.
+
+The dump command returns exactly 32768 bytes of content at which point the
+transmission is complete. The client does not respond with an acknowledgement
+after the final message as no further communication will be initiated by the
+circuit to warrant flow control.
+
+
+1.4. Load
 
 Command byte: 'l' (0x6C / ASCII 108)
 Data: 2 bytes indicating the size of the upload that follows the request
@@ -82,9 +104,24 @@ are used. The leading, MSB is ignored.
   |        3      |       'l'     |0|       15 bit length         |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-Directly following the command message is the stream of bytes to be uploaded
-to the EEPROM. Writing always begins at address 0. The length of the stream
-must match the length advertised in the command message.
+Directly following the command message is the stream of messages each starting
+with a length octet, followed by up to 63 bytes of raw payload data.
 
-The response is a single 0 byte to indicate the operation finished and a new
-command can be sent.
+Each message is explicitly and synchronously acknowledged by the Arduino using
+a 0-byte acknowledgement message before the next message is sent.
+
+The command is complete once the specified number of bytes have been received.
+The Arduino acknowledges the final message with a 0-byte message.
+
+Writing always begins at address 0.
+
+
+2.0 Flow Control
+
+Since the Arduino's serial-over-usb port does not support hardware flow
+control and has a limited 64-byte receive buffer, data is sent in discrete,
+sequential segments that in most cases need to be explicitly acknowledged by
+the peer before the next can be sent.
+
+To prevent an overflow the receive buffer, the maximum segment size is 64
+bytes; 1 length octet followed by at most 63 data bytes.
