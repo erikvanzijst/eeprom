@@ -36,58 +36,10 @@ def atoi(val: str) -> int:
                10)
 
 
-def read(port: Serial, addr: str) -> None:
-    port.write(pack('>BcH', 3, b'r', atoi(addr)))
-    val = port.read(1)
-    print(int.from_bytes(val, 'big'), '/', '0x' + val.hex())
-
-
-def write(port: Serial, addr: str, val: str) -> None:
-    port.write(pack('>BcHB', 4, b'w', atoi(addr), atoi(val)))
-    port.read(1)
-    print('OK')
-
-
-def dump(port: Serial, filename: str) -> None:
-    with open(filename, 'wb') as f:
-        port.write(pack('>Bc', 1, b'd'))
-
-        for i in range(2**15):
-            f.write(port.read(1))
-            f.flush()
-            if i % 100 == 0:
-                print('\r%d%%' % ((i / 2**15) * 100), end='')
-
-    # wait for Adruino to signal completion
-    port.read(1)
-    print('\nComplete.')
-
-
-def load(port: Serial, filename: str) -> None:
-    with open(filename, 'rb') as f:
-        len = min(0x8000, os.fstat(f.fileno()).st_size)
-        print('Loading %d bytes of %s into EEPROM...' % (len, filename))
-        port.write(pack('>BcH', 3, b'l', len))
-
-        for i in range(len):
-            port.write(f.read(1))
-            port.flush()
-            if i % 100 == 0:
-                print('\r%d%%' % ((i / len) * 100), end='')
-
-    # wait for Adruino to signal completion
-    port.read(1)
-    print('\nComplete.')
-
-
-def quit(*args) -> None:
-    raise EOFError()
-
-
-if __name__ == '__main__':
+class AT28C256(object):
     usage = """AT28C256 EEPROM Programmer
 
-Read or write individual addresses, dump out the full contents to a file, or\
+Read or write individual addresses, dump out the full contents to a file, or
 load an image file onto the EEPROM.
 
 To read a single byte:
@@ -104,6 +56,104 @@ To load a local file into the EEPROM:
 
 Address supports hex (0xFF) and octal (0o7) notation.
 """
+
+    def __init__(self, port: Serial):
+        self.port = port
+
+    def _receive(self) -> bytearray:
+        """Reads a single message off the serial port and returns its contents.
+
+        This function does not send an acknowledgement.
+        """
+        l = int(self.port.read(1))
+        buf = memoryview(bytearray(l))
+        tot = 0
+        while tot < l:
+            tot += self.port.readinto(buf)
+        return buf.obj
+
+    def _send(self, data: bytes) -> None:
+        """Wraps the specified data in a length header and transmits it as a
+        single message. `data` should not exceed 63 bytes.
+        """
+        assert len(data) <= 63
+        self.port.write(int.to_bytes(len(data), length=1, byteorder='big',
+                                     signed=False))
+        self.port.write(data)
+
+    def read(self, addr: str) -> None:
+        self._send(pack('>cH', b'r', atoi(addr)))
+        val = self._receive()
+        print(int.from_bytes(val, byteorder='big', signed=False), '/',
+              '0x' + val.hex())
+
+    def write(self, addr: str, val: str) -> None:
+        self._send(pack('>cHB', b'w', atoi(addr), atoi(val)))
+        ack = self._receive()
+        assert len(ack) == 0
+        print('OK')
+
+    def dump(self, filename: str) -> None:
+        with open(filename, 'wb') as f:
+            self._send(b'd')     # send dump command
+
+            cnt = 0
+            while cnt < 0x8000:
+                buf = self._receive()
+                self._send(b'')  # flow control: send ack
+                f.write(buf)
+                f.flush()
+                cnt += len(buf)
+                print('\r%d%%' % ((cnt / 0x8000) * 100), end='')
+
+        print('\nComplete.')
+
+    def load(self, filename: str) -> None:
+        with open(filename, 'rb') as f:
+            size = min(0x8000, os.fstat(f.fileno()).st_size)
+            print('Loading %d bytes of %s into EEPROM...' % (size, filename))
+            self._send(pack('>cH', b'l', size))
+
+            cnt = 0
+            while True:
+                data = f.read(63)
+                if not data:
+                    break
+                cnt += len(data)
+                self._send(data)
+                print('\r%d%%' % (cnt / size) * 100, end='')
+                ack = self._receive()    # flow control: block until ack
+                assert len(ack) == 0
+
+        print('\nComplete.')
+
+    def quit(self, *args) -> None:
+        raise EOFError()
+
+    def repl(self) -> None:
+        print(self.usage)
+
+        while True:
+            try:
+                expr = input('> ').split()
+                {'r': self.read,
+                 'read': self.read,
+                 'w': self.write,
+                 'write': self.write,
+                 'd': self.dump,
+                 'dump': self.dump,
+                 'l': self.load,
+                 'load': self.load,
+                 'quit': self.quit,
+                 'q': self.quit}[expr[0]](self.port, *expr[1:])
+
+            except EOFError:
+                break
+            except (ValueError, KeyError, IndexError, TypeError) as e:
+                print('Invalid command:', e)
+
+
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='AT28C256 EEPROM Programmer')
     parser.add_argument('port', nargs='?',
                         help='the serial port the Arduino is '
@@ -124,9 +174,6 @@ Address supports hex (0xFF) and octal (0o7) notation.
                   'manually.', file=sys.stderr)
             exit(1)
 
-    port = Serial(dev, 9600, timeout=3)
-    print(usage)
-
     histfile = os.path.join(os.path.expanduser("~"), ".eeprom_history")
     try:
         readline.read_history_file(histfile)
@@ -136,21 +183,4 @@ Address supports hex (0xFF) and octal (0o7) notation.
         pass
 
     atexit.register(readline.write_history_file, histfile)
-    while True:
-        try:
-            expr = input('> ').split()
-            {'r': read,
-             'read': read,
-             'w': write,
-             'write': write,
-             'd': dump,
-             'dump': dump,
-             'l': load,
-             'load': load,
-             'quit': quit,
-             'q': quit}[expr[0]](port, *expr[1:])
-
-        except EOFError:
-            break
-        except (ValueError, KeyError, IndexError, TypeError) as e:
-            print('Invalid command:', e)
+    AT28C256(Serial(dev, 9600, timeout=3)).repl()
