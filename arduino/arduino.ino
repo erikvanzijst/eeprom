@@ -65,8 +65,8 @@ MODE mode = NULL;
 byte buf[1 + MAX_PAYLOAD];
 
 void setup() {
-  Serial.begin(9600);
-//  Serial.setTimeout(60l * 1000);
+  Serial.begin(19200);
+  Serial.setTimeout(120000l);
 
   pinMode(EEPROM_CE, OUTPUT);
   pinMode(EEPROM_OE, OUTPUT);
@@ -91,7 +91,11 @@ void setup() {
  * Returns the number of bytes that were copied into `buf` (0 for acks).
  */
 int receive() {
-  int l = Serial.read();
+  int l;
+  do {
+    l = Serial.read();
+  } while (l == -1);
+
   if (l > 0) {
     Serial.readBytes(buf, min(l, sizeof(buf)));
   }
@@ -179,7 +183,7 @@ void dump() {
 
     if (addr > 0 && i == 0) {
       // payload at capacity, send out:
-      send(buf, MAX_PAYLOAD, true);
+      send(payload, MAX_PAYLOAD, true);
     }
     payload[i++] = readAddr(addr);
   }
@@ -193,7 +197,7 @@ void dump() {
 /*
  * Reads the specified number of bytes from the serial port and writes them
  * to the EEPROM.
- * 
+ *
  * This requires the Arduino to be in WRITE mode.
  */
 void load(unsigned int len) {

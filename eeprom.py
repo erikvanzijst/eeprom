@@ -65,7 +65,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
 
         This function does not send an acknowledgement.
         """
-        l = int(self.port.read(1))
+        l = int.from_bytes(self.port.read(1), byteorder='big', signed=False)
         buf = memoryview(bytearray(l))
         tot = 0
         while tot < l:
@@ -145,7 +145,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
                  'l': self.load,
                  'load': self.load,
                  'quit': self.quit,
-                 'q': self.quit}[expr[0]](self.port, *expr[1:])
+                 'q': self.quit}[expr[0]](*expr[1:])
 
             except EOFError:
                 break
@@ -183,4 +183,4 @@ if __name__ == '__main__':
         pass
 
     atexit.register(readline.write_history_file, histfile)
-    AT28C256(Serial(dev, 9600, timeout=3)).repl()
+    AT28C256(Serial(dev, 19200, timeout=3)).repl()
