@@ -1,3 +1,4 @@
 (fp_lib_table
   (lib (name Arduino)(type KiCad)(uri ${KIPRJMOD}/arduino-kicad-library/Arduino.pretty)(options "")(descr "Arduino board and shield footprints"))
+  (lib (name EEPROM)(type KiCad)(uri ${KIPRJMOD}/eeprom.pretty)(options "")(descr Logo))
 )
