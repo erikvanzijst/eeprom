@@ -1,3 +1,5 @@
 (sym_lib_table
   (lib (name eeprom)(type Legacy)(uri ${KIPRJMOD}/eeprom.lib)(options "")(descr ""))
+  (lib (name kicad-rescue)(type Legacy)(uri ${KIPRJMOD}/kicad-rescue.lib)(options "")(descr "")(disabled))
+  (lib (name Arduino)(type Legacy)(uri ${KIPRJMOD}/arduino-kicad-library/arduino.lib)(options "")(descr Arduino))
 )

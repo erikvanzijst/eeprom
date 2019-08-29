@@ -43,7 +43,7 @@
  */
 enum MODE {READ, WRITE};
 const unsigned int MAX_PAYLOAD = 63;
-const unsigned int DELAY_US = 1;
+const unsigned int DELAY_US = 10;
 
 // AT28C256 contol lines
 const unsigned int EEPROM_CE = A0;
@@ -62,11 +62,11 @@ const unsigned int ACT_LED = 13;
 const unsigned int dataPins[] = {2, 3, 4, 5, 6, 7, 8, 9};
 
 MODE mode = NULL;
-byte buf[1 + MAX_PAYLOAD];
+
 
 void setup() {
   Serial.begin(19200);
-  Serial.setTimeout(120000l);
+  Serial.setTimeout(120000L);
 
   pinMode(EEPROM_CE, OUTPUT);
   pinMode(EEPROM_OE, OUTPUT);
@@ -85,19 +85,25 @@ void setup() {
 /*
  * Reads the next message from the serial port and copies its payload into
  * the global `buf` byte array.
- * This function does not send any acknowledgements which is left to the
- * caller.
+ * 
+ * This function can participate in explicit flow control by sending an
+ * explicit acknowledgement message if `sendAck` is `true`.
  *
  * Returns the number of bytes that were copied into `buf` (0 for acks).
  */
-int receive() {
+int receive(byte *buf, size_t len, bool sendAck) {
   int l;
   do {
     l = Serial.read();
   } while (l == -1);
 
   if (l > 0) {
-    Serial.readBytes(buf, min(l, sizeof(buf)));
+    if (Serial.readBytes(buf, min(l, len)) != l) {
+      error();
+    }
+  }
+  if (sendAck) {
+    send(NULL, 0, false);
   }
   return l;
 }
@@ -109,13 +115,16 @@ int receive() {
  * This function enforces flow control, blocking until the client has
  * acknowledged receipt with a 0-byte ack.
  */
-void send(byte *buf, unsigned int len, bool waitForAck) {
+void send(byte *buf, size_t len, bool waitForAck) {
   Serial.write(len);
   if (len > 0) {
     Serial.write(buf, len);
   }
-  if (waitForAck && receive() != 0) {
-    error();
+  if (waitForAck) {
+    byte buf[1 + MAX_PAYLOAD];
+    if (receive(buf, MAX_PAYLOAD, false) != 0) {
+      error();
+    }
   }
 }
 
@@ -132,6 +141,7 @@ void pulse(int pin) {
 void loadShiftAddr(unsigned int addr) {
   for (int i = 15; i >= 0; i--) {
     digitalWrite(SHIFT_SER, ((addr >> i) & 1) ? HIGH : LOW);
+    delayMicroseconds(DELAY_US);
     pulse(SHIFT_SCLK);
   }
   pulse(SHIFT_RCLK);
@@ -165,6 +175,9 @@ void writeAddr(unsigned int addr, byte val) {
   }
   delayMicroseconds(DELAY_US);
 
+//  if (addr == 0x3f) {
+//    delay(1000);
+//  }
   digitalWrite(EEPROM_WE, LOW);
   delayMicroseconds(DELAY_US);
   digitalWrite(EEPROM_WE, HIGH);
@@ -183,14 +196,14 @@ void dump() {
 
     if (addr > 0 && i == 0) {
       // payload at capacity, send out:
-      send(payload, MAX_PAYLOAD, true);
+      send(payload, sizeof(payload), true);
     }
     payload[i++] = readAddr(addr);
   }
 
   if (i) {
     // send remainder
-    send(buf, i, true);
+    send(payload, i, true);
   }
 }
 
@@ -202,10 +215,10 @@ void dump() {
  */
 void load(unsigned int len) {
   unsigned int addr = 0;
-
+  byte buf[1 + MAX_PAYLOAD];
+  
   while (addr < len) {
-    unsigned int cnt = receive();
-    send(NULL, 0, true);
+    unsigned int cnt = receive(buf, sizeof(buf), true);
 
     for (unsigned int i = 0; i < cnt; i++) {
       writeAddr(addr++, buf[i]);
@@ -227,6 +240,7 @@ void writeMode() {
       pinMode(dataPins[i], OUTPUT);
     }
 
+    delay(5);
     mode = WRITE;
   }
 }
@@ -245,6 +259,7 @@ void readMode() {
       pinMode(dataPins[i], INPUT);
     }
 
+    delay(5);
     mode = READ;
   }
 }
@@ -260,9 +275,10 @@ void error() {
 
 void loop() {
   if (Serial.available() > 0) {
+    byte buf[1 + MAX_PAYLOAD];
     digitalWrite(ACT_LED, HIGH);
 
-    unsigned int len = receive();
+    unsigned int len = receive(buf, sizeof(buf), false);
 
     if (buf[0] == 0x72 && len == 3) {
       byte val = readAddr((buf[1] << 8) + buf[2]);
@@ -279,6 +295,7 @@ void loop() {
         dump();
       
     } else if (buf[0] == 0x6c && len == 3) {
+        send(NULL, 0, false); // acknowledge cmd message
         writeMode();
         load((buf[1] << 8) + buf[2]);
         readMode();

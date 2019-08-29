@@ -19,7 +19,11 @@ import atexit
 import os
 import readline
 import sys
+from io import BytesIO
+from itertools import cycle, count
 from struct import pack
+from time import sleep
+from typing import IO
 
 from serial import Serial
 from serial.tools import list_ports
@@ -59,27 +63,35 @@ Address supports hex (0xFF) and octal (0o7) notation.
 
     def __init__(self, port: Serial):
         self.port = port
+        self.MAXPAYLOAD = 62
 
-    def _receive(self) -> bytearray:
+    def _receive(self, ack: bool = False) -> bytearray:
         """Reads a single message off the serial port and returns its contents.
 
-        This function does not send an acknowledgement.
+        This function can optionally send an acknowledgement.
         """
         l = int.from_bytes(self.port.read(1), byteorder='big', signed=False)
         buf = memoryview(bytearray(l))
         tot = 0
         while tot < l:
             tot += self.port.readinto(buf)
+        if ack:
+            self._send(b'')
         return buf.obj
 
-    def _send(self, data: bytes) -> None:
+    def _send(self, data: bytes, ack: bool = False) -> None:
         """Wraps the specified data in a length header and transmits it as a
-        single message. `data` should not exceed 63 bytes.
+        single message. `data` should not exceed MAXPAYLOAD bytes.
+
+        This function can optionally wait for an acknowledgement.
         """
-        assert len(data) <= 63
+        assert len(data) <= self.MAXPAYLOAD
         self.port.write(int.to_bytes(len(data), length=1, byteorder='big',
                                      signed=False))
         self.port.write(data)
+
+        if ack:
+            assert len(self._receive()) == 0
 
     def read(self, addr: str) -> None:
         self._send(pack('>cH', b'r', atoi(addr)))
@@ -88,9 +100,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
               '0x' + val.hex())
 
     def write(self, addr: str, val: str) -> None:
-        self._send(pack('>cHB', b'w', atoi(addr), atoi(val)))
-        ack = self._receive()
-        assert len(ack) == 0
+        self._send(pack('>cHB', b'w', atoi(addr), atoi(val)), ack=True)
         print('OK')
 
     def dump(self, filename: str) -> None:
@@ -99,8 +109,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
 
             cnt = 0
             while cnt < 0x8000:
-                buf = self._receive()
-                self._send(b'')  # flow control: send ack
+                buf = self._receive(ack=True)
                 f.write(buf)
                 f.flush()
                 cnt += len(buf)
@@ -109,29 +118,57 @@ Address supports hex (0xFF) and octal (0o7) notation.
         print('\nComplete.')
 
     def load(self, filename: str) -> None:
-        with open(filename, 'rb') as f:
-            size = min(0x8000, os.fstat(f.fileno()).st_size)
-            print('Loading %d bytes of %s into EEPROM...' % (size, filename))
-            self._send(pack('>cH', b'l', size))
+        try:
+            with open(filename, 'rb') as f:
+                size = min(0x8000, os.fstat(f.fileno()).st_size)
+                print('Loading %d bytes of %s into EEPROM...' % (size, filename))
+                self.fload(f, size)
+        except FileNotFoundError:
+            print('File not found: ' + filename)
 
+    def fload(self, f: IO, size: int) -> None:
+        self._send(pack('>cH', b'l', size), ack=True)
+
+        with open('fload.bin', 'wb') as fout:
             cnt = 0
             while True:
-                data = f.read(63)
+                data = f.read(min(self.MAXPAYLOAD, size - cnt))
                 if not data:
                     break
                 cnt += len(data)
-                self._send(data)
-                print('\r%d%%' % (cnt / size) * 100, end='')
-                ack = self._receive()    # flow control: block until ack
-                assert len(ack) == 0
+                self._send(data, ack=True)
+                fout.write(data)
+                print('\r%d%%' % ((cnt * 100) / size), end='')
 
         print('\nComplete.')
+
+    def test(self, *args) -> None:
+        bio = BytesIO()
+        j = 0
+        for i in range(1024):
+            bio.write(int.to_bytes(j, byteorder='big', length=1))
+            j = (j + 1) % 16
+
+        bio.seek(0)
+        self.fload(bio, 512)
+
+        sleep(.5)
+        gen = count()
+        for row in range(32):
+            print('0x' + int.to_bytes(row, byteorder='big', length=1, signed=False).hex() + '0:  ', end='')
+            for col in range(16):
+                addr = next(gen)
+                self._send(pack('>cH', b'r', addr))
+                val = self._receive()
+                print(val.hex() + ' ', end='')
+            print('')
 
     def quit(self, *args) -> None:
         raise EOFError()
 
     def repl(self) -> None:
         print(self.usage)
+        sleep(1)
 
         while True:
             try:
@@ -144,6 +181,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
                  'dump': self.dump,
                  'l': self.load,
                  'load': self.load,
+                 't': self.test,
                  'quit': self.quit,
                  'q': self.quit}[expr[0]](*expr[1:])
 
@@ -183,4 +221,4 @@ if __name__ == '__main__':
         pass
 
     atexit.register(readline.write_history_file, histfile)
-    AT28C256(Serial(dev, 19200, timeout=3)).repl()
+    AT28C256(Serial(port=dev, baudrate=19200, timeout=30)).repl()

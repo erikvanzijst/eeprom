@@ -108,7 +108,9 @@ Directly following the command message is the stream of messages each starting
 with a length octet, followed by up to 63 bytes of raw payload data.
 
 Each message is explicitly and synchronously acknowledged by the Arduino using
-a 0-byte acknowledgement message before the next message is sent.
+a 0-byte acknowledgement message before the next message is sent. This includes
+the initial command message which needs to be explicitly acknowledged before
+the client can proceed to send payload messages.
 
 The command is complete once the specified number of bytes have been received.
 The Arduino acknowledges the final message with a 0-byte message.
