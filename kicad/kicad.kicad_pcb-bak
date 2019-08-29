@@ -2,7 +2,7 @@
 
   (general
     (thickness 1.6)
-    (drawings 9)
+    (drawings 10)
     (tracks 338)
     (zones 0)
     (modules 9)
@@ -386,7 +386,7 @@
     (fp_text reference R1 (at 3.81 -2.37) (layer F.SilkS)
       (effects (font (size 1 1) (thickness 0.15)))
     )
-    (fp_text value 330 (at 3.81 2.37) (layer F.Fab)
+    (fp_text value 470R (at 3.81 2.37) (layer F.Fab)
       (effects (font (size 1 1) (thickness 0.15)))
     )
     (fp_line (start 0.66 -1.25) (end 0.66 1.25) (layer F.Fab) (width 0.1))
@@ -796,6 +796,9 @@
       (net 64 "Net-(XA1-PadMISO)"))
   )
 
+  (gr_text "EEPROM Programmer Shield for\nArduino UNO R3" (at 144.653 105.537) (layer F.SilkS)
+    (effects (font (size 1 1) (thickness 0.15)))
+  )
   (gr_line (start 130.2512 113.7412) (end 130.2512 60.1472) (layer Edge.Cuts) (width 0.05) (tstamp 5D67A849))
   (gr_line (start 196.5452 113.7412) (end 130.2512 113.7412) (layer Edge.Cuts) (width 0.05))
   (gr_line (start 196.5452 112.4204) (end 196.5452 113.7412) (layer Edge.Cuts) (width 0.05))
