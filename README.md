@@ -15,4 +15,4 @@ This repository contains:
 ![PCB](PCB.png)
 
 The PCB can be ordered from
-[OSH Park](https://oshpark.com/shared_projects/vBZI6wcN).
+[OSH Park](https://oshpark.com/shared_projects/gB4fefq3).
