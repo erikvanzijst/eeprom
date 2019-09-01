@@ -41,22 +41,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-enum MODE {READ, WRITE};
+enum MODE {STANDBY, READ, WRITE};
 const unsigned int MAX_PAYLOAD = 63;
 const unsigned int DELAY_US = 10;
 
 // AT28C256 contol lines
-const unsigned int EEPROM_CE = A0;
+const unsigned int EEPROM_WE = A0;
 const unsigned int EEPROM_OE = A1;
-const unsigned int EEPROM_WE = A2;
+const unsigned int EEPROM_CE = A2;
 
 // 74HC595 control lines
-const unsigned int SHIFT_SER = 10;
-const unsigned int SHIFT_RCLK = 11;
-const unsigned int SHIFT_SCLK = 12;
+const unsigned int SHIFT_SER = A4;
+const unsigned int SHIFT_RCLK = 12;
+const unsigned int SHIFT_SCLK = 11;
 
 // Activity indicator LED
-const unsigned int ACT_LED = 13;
+const unsigned int ACT_LED = 10;
 
 // Data pins (LSB to MSB)
 const unsigned int dataPins[] = {2, 3, 4, 5, 6, 7, 8, 9};
@@ -79,7 +79,7 @@ void setup() {
   pinMode(ACT_LED, OUTPUT);
   digitalWrite(ACT_LED, LOW);
 
-  readMode();
+  standbyMode();
 }
 
 /*
@@ -151,6 +151,7 @@ void loadShiftAddr(unsigned int addr) {
  * Returns the byte at the specified address.
  */
 byte readAddr(unsigned int addr) {
+  readMode();
   loadShiftAddr(addr);
   delayMicroseconds(DELAY_US);
 
@@ -158,6 +159,7 @@ byte readAddr(unsigned int addr) {
   for (unsigned int i = 0; i < 8; i++) {
     val |= (digitalRead(dataPins[i]) << i);
   }
+  standbyMode();
   return val;
 }
 
@@ -169,18 +171,20 @@ byte readAddr(unsigned int addr) {
 void writeAddr(unsigned int addr, byte val) {
   loadShiftAddr(addr);
 
+  writeMode();
+
   // load data byte
   for (unsigned int i = 0; i < 8; i++) {
     digitalWrite(dataPins[i], (val >> i) & 1);
   }
   delayMicroseconds(DELAY_US);
 
-//  if (addr == 0x3f) {
-//    delay(1000);
-//  }
   digitalWrite(EEPROM_WE, LOW);
   delayMicroseconds(DELAY_US);
   digitalWrite(EEPROM_WE, HIGH);
+
+  delayMicroseconds(DELAY_US);
+  standbyMode();
 }
 
 /*
@@ -222,6 +226,7 @@ void load(unsigned int len) {
 
     for (unsigned int i = 0; i < cnt; i++) {
       writeAddr(addr++, buf[i]);
+      delay(5);
     }
   }
 }
@@ -231,18 +236,16 @@ void load(unsigned int len) {
  * EEPROM_OE HIGH.
  */
 void writeMode() {
-  if (mode != WRITE) {
-    digitalWrite(EEPROM_CE, LOW);
-    digitalWrite(EEPROM_OE, HIGH);
-    digitalWrite(EEPROM_WE, HIGH);
+  digitalWrite(EEPROM_CE, LOW);
+  digitalWrite(EEPROM_OE, HIGH);
+  digitalWrite(EEPROM_WE, HIGH);
 
-    for (unsigned int i = 0; i < 8; i++) {
-      pinMode(dataPins[i], OUTPUT);
-    }
-
-    delay(5);
-    mode = WRITE;
+  for (unsigned int i = 0; i < 8; i++) {
+    pinMode(dataPins[i], OUTPUT);
   }
+
+  delayMicroseconds(DELAY_US);
+  mode = WRITE;
 }
 
 /**
@@ -251,17 +254,30 @@ void writeMode() {
  */
 void readMode() {
   if (mode != READ) {
-    digitalWrite(EEPROM_CE, LOW);
-    digitalWrite(EEPROM_OE, LOW);
-    digitalWrite(EEPROM_WE, HIGH);
-
     for (unsigned int i = 0; i < 8; i++) {
       pinMode(dataPins[i], INPUT);
     }
-
-    delay(5);
+  
+    digitalWrite(EEPROM_CE, LOW);
+    digitalWrite(EEPROM_OE, LOW);
+    digitalWrite(EEPROM_WE, HIGH);
+  
+    delayMicroseconds(DELAY_US);
     mode = READ;
   }
+}
+
+void standbyMode() {
+  for (unsigned int i = 0; i < 8; i++) {
+    pinMode(dataPins[i], INPUT);
+  }
+
+  digitalWrite(EEPROM_CE, HIGH);
+  digitalWrite(EEPROM_OE, LOW);
+  digitalWrite(EEPROM_WE, HIGH);
+
+  delayMicroseconds(DELAY_US);
+  mode = STANDBY;
 }
 
 void error() {
@@ -285,20 +301,16 @@ void loop() {
       send(&val, 1, false);
 
     } else if (buf[0] == 0x77 && len == 4) {
-        writeMode();
         writeAddr((buf[1] << 8) + buf[2], buf[3]);
         // signal operation completion
         send(NULL, 0, false);
-        readMode();
-      
+
     } else if (buf[0] == 0x64 && len == 1) {
         dump();
       
     } else if (buf[0] == 0x6c && len == 3) {
         send(NULL, 0, false); // acknowledge cmd message
-        writeMode();
         load((buf[1] << 8) + buf[2]);
-        readMode();
 
     } else {
       error();

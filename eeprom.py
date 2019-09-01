@@ -20,7 +20,7 @@ import os
 import readline
 import sys
 from io import BytesIO
-from itertools import cycle, count
+from itertools import count
 from struct import pack
 from time import sleep
 from typing import IO
