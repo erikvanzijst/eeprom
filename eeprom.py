@@ -19,6 +19,7 @@ import atexit
 import os
 import readline
 import sys
+import typing
 from io import BytesIO
 from itertools import count
 from struct import pack
@@ -105,17 +106,22 @@ Address supports hex (0xFF) and octal (0o7) notation.
 
     def dump(self, filename: str) -> None:
         with open(filename, 'wb') as f:
-            self._send(b'd')     # send dump command
+            self.fdump(f)
 
-            cnt = 0
-            while cnt < 0x8000:
-                buf = self._receive(ack=True)
-                f.write(buf)
-                f.flush()
-                cnt += len(buf)
-                print('\r%d%%' % ((cnt / 0x8000) * 100), end='')
+    def fdump(self, f: typing.IO, console=sys.stdout) -> None:
+        self._send(b'd')     # send dump command
 
-        print('\nComplete.')
+        cnt = 0
+        while cnt < 0x8000:
+            buf = self._receive(ack=True)
+            f.write(buf)
+            f.flush()
+            cnt += len(buf)
+            if console:
+                print('\r%d%%' % ((cnt / 0x8000) * 100), end='', file=console)
+
+        if console:
+            print('\nComplete.', file=console)
 
     def load(self, filename: str) -> None:
         try:
@@ -141,6 +147,10 @@ Address supports hex (0xFF) and octal (0o7) notation.
                 print('\r%d%%' % ((cnt * 100) / size), end='')
 
         print('\nComplete.')
+
+    def reset(self) -> None:
+        """Sends a reset command."""
+        self._send(pack('>c', b'r'))
 
     def test(self, *args) -> None:
         bio = BytesIO()
@@ -168,7 +178,6 @@ Address supports hex (0xFF) and octal (0o7) notation.
 
     def repl(self) -> None:
         print(self.usage)
-        sleep(1)
 
         while True:
             try:
@@ -182,6 +191,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
                  'l': self.load,
                  'load': self.load,
                  't': self.test,
+                 'reset': self.reset,
                  'quit': self.quit,
                  'q': self.quit}[expr[0]](*expr[1:])
 
@@ -192,11 +202,15 @@ Address supports hex (0xFF) and octal (0o7) notation.
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='AT28C256 EEPROM Programmer')
-    parser.add_argument('port', nargs='?',
+    parser = argparse.ArgumentParser(sys.argv[0],
+                                     description='AT28C256 EEPROM Programmer')
+    parser.add_argument('-p', '--port', required=False,
                         help='the serial port the Arduino is '
                              'connected to (on OSX typically '
                              '/dev/tty.usbmodemXXXX)')
+    parser.add_argument('cmd', choices=('dump', 'load'), nargs='?',
+                        help='dumps the entire contents of the EEPOM to stdout '
+                             'or loads stdin onto the EEPROM')
     args = parser.parse_args()
 
     dev = args.port
@@ -207,19 +221,28 @@ if __name__ == '__main__':
                 filter(lambda p: p.product and 'arduino' in p.product.lower() or
                        p.manufacturer and 'arduino' in p.manufacturer.lower(),
                        list_ports.comports())).device
-            print('Found Arduino at port', dev)
         except StopIteration:
             print('Cannot find Arduino. If it is connected, specify the port '
                   'manually.', file=sys.stderr)
             exit(1)
+    eeprom = AT28C256(Serial(port=dev, baudrate=19200, timeout=30))
+    sleep(2)    # initialization
 
-    histfile = os.path.join(os.path.expanduser("~"), ".eeprom_history")
     try:
-        readline.read_history_file(histfile)
-        # default history len is -1 (infinite), which may grow unruly
-        readline.set_history_length(1000)
-    except FileNotFoundError:
-        pass
+        if args.cmd == 'dump':
+            eeprom.fdump(sys.stdout.buffer, console=None)
+        elif args.cmd == 'load':
+            pass
+        else:
+            histfile = os.path.join(os.path.expanduser("~"), ".eeprom_history")
+            try:
+                readline.read_history_file(histfile)
+                # default history len is -1 (infinite), which may grow unruly
+                readline.set_history_length(1000)
+            except FileNotFoundError:
+                pass
 
-    atexit.register(readline.write_history_file, histfile)
-    AT28C256(Serial(port=dev, baudrate=19200, timeout=30)).repl()
+            atexit.register(readline.write_history_file, histfile)
+            eeprom.repl()
+    except (KeyboardInterrupt, BrokenPipeError):
+        eeprom.reset()

@@ -118,6 +118,21 @@ The Arduino acknowledges the final message with a 0-byte message.
 Writing always begins at address 0.
 
 
+1.5 Reset
+
+Command byte: 'r' (0x72 / ASCII 114)
+Data: No payload following the command byte.
+
+   0                   1
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |        1      |       'r'     |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+Immediately abort the pending operation and wait for a new command. No
+acknowledgement is sent.
+
+
 2.0 Flow Control
 
 Since the Arduino's serial-over-usb port does not support hardware flow

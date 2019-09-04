@@ -16,13 +16,15 @@
  *   8 | EEPROM IO6
  *   9 | EEPROM IO7
  * ----+--------------
- *  10 | 74HC595 SER
- *  11 | 74HC595 RCLK
- *  12 | 74HC595 SCLK
+ *  A3 | 74HC595 OE
+ *  A4 | 74HC595 SER
+ *  11 | 74HC595 SCLK
+ *  12 | 74HC595 RCLK
+ *  13 | 74HC595 CLR
  * ----+--------------
- *  A0 | EEPROM CE
+ *  A0 | EEPROM WE
  *  A1 | EEPROM OE
- *  A2 | EEPROM WE
+ *  A2 | EEPROM CE
  * ----+--------------
  *  13 | Activity LED
  * ----+--------------
@@ -42,6 +44,14 @@
  * limitations under the License.
  */
 enum MODE {STANDBY, READ, WRITE};
+typedef enum {
+  OK,
+  E_RESET,      // reset command received
+  E_CORRUPT,    // inbound packet corrupt
+  E_UNEXPECTED, // unexpected packet received
+  E_UNKNOWN     // unknown error
+} error;
+
 const unsigned int MAX_PAYLOAD = 63;
 const unsigned int DELAY_US = 10;
 
@@ -64,6 +74,7 @@ const unsigned int ACT_LED = 10;
 const unsigned int dataPins[] = {2, 3, 4, 5, 6, 7, 8, 9};
 
 MODE mode = NULL;
+error errno = OK;
 
 
 void setup() {
@@ -91,12 +102,13 @@ void setup() {
 
 /*
  * Reads the next message from the serial port and copies its payload into
- * the global `buf` byte array.
+ * the specified `buf` byte array.
  * 
  * This function can participate in explicit flow control by sending an
  * explicit acknowledgement message if `sendAck` is `true`.
  *
- * Returns the number of bytes that were copied into `buf` (0 for acks).
+ * Returns the number of bytes that were copied into `buf` (0 for acks), or -1
+ * if there was an error (check global `errno`).
  */
 int receive(byte *buf, size_t len, bool sendAck) {
   int l;
@@ -106,11 +118,12 @@ int receive(byte *buf, size_t len, bool sendAck) {
 
   if (l > 0) {
     if (Serial.readBytes(buf, min(l, len)) != l) {
-      error();
+      errno = E_CORRUPT;
+      return -1;
     }
   }
-  if (sendAck) {
-    send(NULL, 0, false);
+  if (sendAck && send(NULL, 0, false) == -1) {
+    return -1;
   }
   return l;
 }
@@ -121,18 +134,29 @@ int receive(byte *buf, size_t len, bool sendAck) {
  *
  * This function enforces flow control, blocking until the client has
  * acknowledged receipt with a 0-byte ack.
+ *
+ * Returns 0 on success, or -1 if an error occurred, in which case the global
+ * `errno` variable gets set.
  */
-void send(byte *buf, size_t len, bool waitForAck) {
+int send(byte *buf, size_t len, bool waitForAck) {
   Serial.write(len);
   if (len > 0) {
     Serial.write(buf, len);
   }
   if (waitForAck) {
     byte buf[1 + MAX_PAYLOAD];
-    if (receive(buf, MAX_PAYLOAD, false) != 0) {
-      error();
+    int len = receive(buf, MAX_PAYLOAD, false);
+    if (len != 0) {
+        if (len == 1 && buf[0] == 'r') {
+            // reset
+            errno = E_RESET;
+        } else if (len != -1) {
+            errno = E_UNEXPECTED;
+        }
+      return -1;
     }
   }
+  return 0;
 }
 
 void pulse(int pin) {
@@ -198,8 +222,11 @@ void writeAddr(unsigned int addr, byte val) {
 /*
  * Writes the full contents of the EEPROM to the serial port in sequential
  * messages of up to 63 bytes, waiting for explicit acknowledgement of each.
+ *
+ * Returns 0 on success, -1 on error, in which case the global `errno` variable
+ * will be set.
  */
-void dump() {
+int dump() {
   byte payload[MAX_PAYLOAD];
   unsigned int i = 0;
 
@@ -208,15 +235,18 @@ void dump() {
 
     if (addr > 0 && i == 0) {
       // payload at capacity, send out:
-      send(payload, sizeof(payload), true);
+      if (send(payload, sizeof(payload), true) == -1) {
+        return -1;  // abort immediately
+      }
     }
     payload[i++] = readAddr(addr);
   }
 
   if (i) {
     // send remainder
-    send(payload, i, true);
+    return send(payload, i, true);
   }
+  return 0;
 }
 
 /*
@@ -224,26 +254,36 @@ void dump() {
  * to the EEPROM.
  *
  * This requires the Arduino to be in WRITE mode.
+ *
+ * Returns 0 on success, -1 on error, in which case the global `errno` variable
+ * gets set.
  */
-void load(unsigned int len) {
+int load(unsigned int len) {
   unsigned int addr = 0;
   byte buf[1 + MAX_PAYLOAD];
   
   while (addr < len) {
-    unsigned int cnt = receive(buf, sizeof(buf), true);
+    int cnt = receive(buf, sizeof(buf), true);
+    if (cnt == -1) {
+      // unexpected error; abort immediately
+      return -1;
+    }
 
-    for (unsigned int i = 0; i < cnt; i++) {
+    for (int i = 0; i < cnt; i++) {
       writeAddr(addr++, buf[i]);
       delay(5);
     }
   }
+  return 0;
 }
 
 /*
  * Switches the pin mode for the I/O pins to OUTPUT, pulls EEPROM_CE LOW and
  * EEPROM_OE HIGH.
+ *
+ * Returns 0 on success, or -1 on error.
  */
-void writeMode() {
+int writeMode() {
   digitalWrite(EEPROM_CE, LOW);
   digitalWrite(EEPROM_OE, HIGH);
   digitalWrite(EEPROM_WE, HIGH);
@@ -254,13 +294,16 @@ void writeMode() {
 
   delayMicroseconds(DELAY_US);
   mode = WRITE;
+  return 0;
 }
 
 /**
  * Switches the pin mode for the I/O pins to INPUT, pulls EEPROM_CE LOW,
  * EEPROM_OE LOW and EEPROM_WE HIGH.
+ *
+ * Returns 0 on success, or -1 on error.
  */
-void readMode() {
+int readMode() {
   if (mode != READ) {
     for (unsigned int i = 0; i < 8; i++) {
       pinMode(dataPins[i], INPUT);
@@ -273,9 +316,10 @@ void readMode() {
     delayMicroseconds(DELAY_US);
     mode = READ;
   }
+  return 0;
 }
 
-void standbyMode() {
+int standbyMode() {
   for (unsigned int i = 0; i < 8; i++) {
     pinMode(dataPins[i], INPUT);
   }
@@ -286,15 +330,24 @@ void standbyMode() {
 
   delayMicroseconds(DELAY_US);
   mode = STANDBY;
+  return 0;
 }
 
-void error() {
-  for (int i = 0; i < 5; i++) {
-    digitalWrite(ACT_LED, LOW);
-    delay(100);
-    digitalWrite(ACT_LED, HIGH);
-    delay(100);
+/**
+ * Flashes out the errno value and resets the errno variable.
+ */
+void processError() {
+  // TODO: different patterns for different errors
+  if (errno != OK) {
+      for (int i = 0; i < 5; i++) {
+        digitalWrite(ACT_LED, HIGH);
+        delay(100);
+        digitalWrite(ACT_LED, LOW);
+        delay(100);
+      }
   }
+  // clear global error state
+  errno = OK;
 }
 
 void loop() {
@@ -302,27 +355,32 @@ void loop() {
     byte buf[1 + MAX_PAYLOAD];
     digitalWrite(ACT_LED, HIGH);
 
-    unsigned int len = receive(buf, sizeof(buf), false);
+    const int len = receive(buf, sizeof(buf), false);
+    if (len > 0) {
+        if (buf[0] == 0x72 && len == 3) {
+          byte val = readAddr((buf[1] << 8) + buf[2]);
+          send(&val, 1, false);
 
-    if (buf[0] == 0x72 && len == 3) {
-      byte val = readAddr((buf[1] << 8) + buf[2]);
-      send(&val, 1, false);
+        } else if (buf[0] == 0x77 && len == 4) {
+            writeAddr((buf[1] << 8) + buf[2], buf[3]);
+            // signal operation completion
+            send(NULL, 0, false);
 
-    } else if (buf[0] == 0x77 && len == 4) {
-        writeAddr((buf[1] << 8) + buf[2], buf[3]);
-        // signal operation completion
-        send(NULL, 0, false);
+        } else if (buf[0] == 0x64 && len == 1) {
+            dump();
 
-    } else if (buf[0] == 0x64 && len == 1) {
-        dump();
-      
-    } else if (buf[0] == 0x6c && len == 3) {
-        send(NULL, 0, false); // acknowledge cmd message
-        load((buf[1] << 8) + buf[2]);
+        } else if (buf[0] == 0x6c && len == 3) {
+            send(NULL, 0, false); // acknowledge cmd message
+            load((buf[1] << 8) + buf[2]);
 
-    } else {
-      error();
+        } else if (buf[0] == 0x72 && len == 1) {
+            // ignore reset command
+
+        } else {
+          errno = E_UNKNOWN;
+        }
     }
     digitalWrite(ACT_LED, LOW);
   }
+  processError();
 }
