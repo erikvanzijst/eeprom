@@ -51,9 +51,11 @@ const unsigned int EEPROM_OE = A1;
 const unsigned int EEPROM_CE = A2;
 
 // 74HC595 control lines
+const unsigned int SHIFT_OE = A3;
 const unsigned int SHIFT_SER = A4;
 const unsigned int SHIFT_RCLK = 12;
 const unsigned int SHIFT_SCLK = 11;
+const unsigned int SHIFT_CLR = 13;
 
 // Activity indicator LED
 const unsigned int ACT_LED = 10;
@@ -72,9 +74,14 @@ void setup() {
   pinMode(EEPROM_OE, OUTPUT);
   pinMode(EEPROM_WE, OUTPUT);
 
+  pinMode(SHIFT_OE, OUTPUT);
   pinMode(SHIFT_SER, OUTPUT);
   pinMode(SHIFT_RCLK, OUTPUT);
   pinMode(SHIFT_SCLK, OUTPUT);
+  pinMode(SHIFT_CLR, OUTPUT);
+
+  digitalWrite(SHIFT_OE, LOW);
+  digitalWrite(SHIFT_CLR, HIGH);
 
   pinMode(ACT_LED, OUTPUT);
   digitalWrite(ACT_LED, LOW);
@@ -144,6 +151,7 @@ void loadShiftAddr(unsigned int addr) {
     delayMicroseconds(DELAY_US);
     pulse(SHIFT_SCLK);
   }
+  delayMicroseconds(DELAY_US);
   pulse(SHIFT_RCLK);
 }
 
@@ -272,8 +280,8 @@ void standbyMode() {
     pinMode(dataPins[i], INPUT);
   }
 
-  digitalWrite(EEPROM_CE, HIGH);
   digitalWrite(EEPROM_OE, LOW);
+  digitalWrite(EEPROM_CE, HIGH);
   digitalWrite(EEPROM_WE, HIGH);
 
   delayMicroseconds(DELAY_US);

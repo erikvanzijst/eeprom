@@ -204,7 +204,8 @@ if __name__ == '__main__':
         try:
             # attempt to autodetect the Arduino
             dev = next(
-                filter(lambda p: p.product and 'arduino' in p.product.lower(),
+                filter(lambda p: p.product and 'arduino' in p.product.lower() or
+                       p.manufacturer and 'arduino' in p.manufacturer.lower(),
                        list_ports.comports())).device
             print('Found Arduino at port', dev)
         except StopIteration:
