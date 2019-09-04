@@ -19,7 +19,6 @@ import atexit
 import os
 import readline
 import sys
-import typing
 from io import BytesIO
 from itertools import count
 from struct import pack
@@ -58,6 +57,9 @@ To dump the entire EEPROM to a file:
 
 To load a local file into the EEPROM:
 > [l|load] [filename]
+
+Send a reset command:
+> reset
 
 Address supports hex (0xFF) and octal (0o7) notation.
 """
@@ -108,7 +110,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
         with open(filename, 'wb') as f:
             self.fdump(f)
 
-    def fdump(self, f: typing.IO, console=sys.stdout) -> None:
+    def fdump(self, f: IO, console=sys.stdout) -> None:
         self._send(b'd')     # send dump command
 
         cnt = 0
@@ -127,12 +129,12 @@ Address supports hex (0xFF) and octal (0o7) notation.
         try:
             with open(filename, 'rb') as f:
                 size = min(0x8000, os.fstat(f.fileno()).st_size)
-                print('Loading %d bytes of %s into EEPROM...' % (size, filename))
+                print('Loading %d bytes into EEPROM...' % size)
                 self.fload(f, size)
         except FileNotFoundError:
             print('File not found: ' + filename)
 
-    def fload(self, f: IO, size: int) -> None:
+    def fload(self, f: IO, size: int, console=sys.stdout) -> None:
         self._send(pack('>cH', b'l', size), ack=True)
 
         with open('fload.bin', 'wb') as fout:
@@ -144,9 +146,11 @@ Address supports hex (0xFF) and octal (0o7) notation.
                 cnt += len(data)
                 self._send(data, ack=True)
                 fout.write(data)
-                print('\r%d%%' % ((cnt * 100) / size), end='')
+                if console:
+                    print('\r%d%%' % ((cnt * 100) / size), end='', file=console)
 
-        print('\nComplete.')
+        if console:
+            print('\nComplete.', file=console)
 
     def reset(self) -> None:
         """Sends a reset command."""
@@ -210,7 +214,7 @@ if __name__ == '__main__':
                              '/dev/tty.usbmodemXXXX)')
     parser.add_argument('cmd', choices=('dump', 'load'), nargs='?',
                         help='dumps the entire contents of the EEPOM to stdout '
-                             'or loads stdin onto the EEPROM')
+                             'or loads up to 32kb of stdin onto the EEPROM')
     args = parser.parse_args()
 
     dev = args.port
@@ -232,7 +236,13 @@ if __name__ == '__main__':
         if args.cmd == 'dump':
             eeprom.fdump(sys.stdout.buffer, console=None)
         elif args.cmd == 'load':
-            pass
+            # eagerly read all of stdin to determine the ROM size
+            with BytesIO() as f:
+                f.write(sys.stdin.buffer.read(0x8000))
+                size = f.tell()
+                f.seek(0)
+                print('Loading %d bytes into EEPROM...' % size)
+                eeprom.fload(f, size=size)
         else:
             histfile = os.path.join(os.path.expanduser("~"), ".eeprom_history")
             try:
