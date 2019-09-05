@@ -17,11 +17,13 @@
 import argparse
 import atexit
 import os
+import random
 import readline
 import sys
 from io import BytesIO
-from itertools import count
+from itertools import islice
 from struct import pack
+from tempfile import NamedTemporaryFile
 from time import sleep
 from typing import IO
 
@@ -110,12 +112,12 @@ Address supports hex (0xFF) and octal (0o7) notation.
         with open(filename, 'wb') as f:
             self.fdump(f)
 
-    def fdump(self, f: IO, console=sys.stdout) -> None:
+    def fdump(self, f: IO, size=0x8000, console=sys.stdout) -> None:
         self._send(b'd')     # send dump command
 
         cnt = 0
-        while cnt < 0x8000:
-            buf = self._receive(ack=True)
+        while cnt < size:
+            buf = self._receive(ack=True)[:size - cnt]
             f.write(buf)
             f.flush()
             cnt += len(buf)
@@ -124,6 +126,11 @@ Address supports hex (0xFF) and octal (0o7) notation.
 
         if console:
             print('\nComplete.', file=console)
+
+        if size < 0x8000:
+            self.reset()
+            # consume the remaining packet
+            self._receive(ack=False)
 
     def load(self, filename: str) -> None:
         try:
@@ -156,26 +163,41 @@ Address supports hex (0xFF) and octal (0o7) notation.
         """Sends a reset command."""
         self._send(pack('>c', b'r'))
 
-    def test(self, *args) -> None:
-        bio = BytesIO()
-        j = 0
-        for i in range(1024):
-            bio.write(int.to_bytes(j, byteorder='big', length=1))
-            j = (j + 1) % 16
+    def _rnd(self):
+        """returns a generator producing random ASCII data."""
+        while True:
+            yield random.choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
+                                'RSTUVWXYZ          \n')
 
-        bio.seek(0)
-        self.fload(bio, 512)
+    def test(self, size: str = '32768') -> None:
+        """Generates a random stream of ASCII data that is written to the
+        EEPROM which is then in turn read back and diffed against the original
+        data.
+        """
+        size = int(size)
+        data = BytesIO()
+        for c in islice(self._rnd(), size):
+            data.write(c.encode('ascii'))
+        data.seek(0)
+        print('Writing...')
+        self.fload(data, size)
 
-        sleep(.5)
-        gen = count()
-        for row in range(32):
-            print('0x' + int.to_bytes(row, byteorder='big', length=1, signed=False).hex() + '0:  ', end='')
-            for col in range(16):
-                addr = next(gen)
-                self._send(pack('>cH', b'r', addr))
-                val = self._receive()
-                print(val.hex() + ' ', end='')
-            print('')
+        result = BytesIO()
+        print('Reading...')
+        self.fdump(result, size=size)
+        result.seek(0)
+
+        if result.getvalue() != data.getvalue():
+            with NamedTemporaryFile(prefix='local') as local:
+                with NamedTemporaryFile(prefix='eeprom') as remote:
+                    local.write(data.getvalue())
+                    local.flush()
+                    remote.write(result.getvalue())
+                    remote.flush()
+
+                    os.system('diff -U 3 -a %s %s | less' % (local.name, remote.name))
+        else:
+            print('OK')
 
     def quit(self, *args) -> None:
         raise EOFError()
@@ -195,6 +217,7 @@ Address supports hex (0xFF) and octal (0o7) notation.
                  'l': self.load,
                  'load': self.load,
                  't': self.test,
+                 'test': self.test,
                  'reset': self.reset,
                  'quit': self.quit,
                  'q': self.quit}[expr[0]](*expr[1:])
@@ -212,9 +235,16 @@ if __name__ == '__main__':
                         help='the serial port the Arduino is '
                              'connected to (on OSX typically '
                              '/dev/tty.usbmodemXXXX)')
-    parser.add_argument('cmd', choices=('dump', 'load'), nargs='?',
-                        help='dumps the entire contents of the EEPOM to stdout '
-                             'or loads up to 32kb of stdin onto the EEPROM')
+    cmds = parser.add_subparsers(dest='cmd', help='sub-command help')
+    dump_cmd = cmds.add_parser('dump',
+                               help='dumps the entire contents of the EEPOM to stdout')
+    dump_cmd.add_argument('-s', '--size', help='only dump the first n bytes',
+                          type=int, required=False, default=0x8000)
+    cmds.add_parser('load', help='loads up to 32kb of stdin onto the EEPROM')
+    test_cmd = cmds.add_parser('test', help='writes random data and reads it '
+                                            'back for verification')
+    test_cmd.add_argument('-s', '--size', help='write only n bytes of test data',
+                          type=int, required=False, default=0x8000)
     args = parser.parse_args()
 
     dev = args.port
@@ -234,7 +264,7 @@ if __name__ == '__main__':
 
     try:
         if args.cmd == 'dump':
-            eeprom.fdump(sys.stdout.buffer, console=None)
+            eeprom.fdump(sys.stdout.buffer, size=args.size, console=None)
         elif args.cmd == 'load':
             # eagerly read all of stdin to determine the ROM size
             with BytesIO() as f:
@@ -243,6 +273,8 @@ if __name__ == '__main__':
                 f.seek(0)
                 print('Loading %d bytes into EEPROM...' % size)
                 eeprom.fload(f, size=size)
+        elif args.cmd == 'test':
+            eeprom.test(size=str(args.size))
         else:
             histfile = os.path.join(os.path.expanduser("~"), ".eeprom_history")
             try:

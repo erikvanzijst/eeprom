@@ -271,7 +271,7 @@ int load(unsigned int len) {
 
     for (int i = 0; i < cnt; i++) {
       writeAddr(addr++, buf[i]);
-      delay(5);
+      delay(10);
     }
   }
   return 0;
