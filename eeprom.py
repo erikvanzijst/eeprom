@@ -229,7 +229,7 @@ if __name__ == '__main__':
             print('Cannot find Arduino. If it is connected, specify the port '
                   'manually.', file=sys.stderr)
             exit(1)
-    eeprom = AT28C256(Serial(port=dev, baudrate=19200, timeout=30))
+    eeprom = AT28C256(Serial(port=dev, baudrate=115200, timeout=30))
     sleep(2)    # initialization
 
     try:

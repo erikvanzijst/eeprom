@@ -78,7 +78,7 @@ error errno = OK;
 
 
 void setup() {
-  Serial.begin(19200);
+  Serial.begin(115200);
   Serial.setTimeout(120000L);
 
   pinMode(EEPROM_CE, OUTPUT);
