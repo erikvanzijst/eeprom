@@ -174,6 +174,11 @@ Address supports hex (0xFF) and octal (0o7) notation.
         EEPROM which is then in turn read back and diffed against the original
         data.
         """
+        # TODO: A better test might be a 2-pass process, first writing all
+        #       zeros and reading them back, followed by writing all ones and
+        #       reading that back too. This is guaranteed to flip every bit at
+        #       least once.
+        #       If either test fails, start "hexdump | less" and abort.
         size = int(size)
         data = BytesIO()
         for c in islice(self._rnd(), size):
