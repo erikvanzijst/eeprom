@@ -4,6 +4,8 @@ Parallel EEPROM Programmer
 This is a Shield extension board for Arduino UNO R3 that adds the ability to
 read and write parallel EEPROM chips.
 
+Full writeup is at https://medium.com/@erikvanzijst/diy-eeprom-programmer-4fd11a486ea
+
 ![PCB Layout](shield.png)
 
 This repository contains:
