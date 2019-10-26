@@ -14,7 +14,7 @@ This repository contains:
 * Interactive Python based client to read and write to the EEPROM
 * KiCad scehmatic and PCB
 
-![PCB](PCB.png)
+![PCB](PCB.jpg)
 
 The PCB can be ordered from
 [OSH Park](https://oshpark.com/shared_projects/gB4fefq3).
