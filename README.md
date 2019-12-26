@@ -43,3 +43,5 @@ Full writeup is at https://medium.com/@erikvanzijst/diy-eeprom-programmer-4fd11a
 
 The PCB can be ordered from
 [OSH Park](https://oshpark.com/shared_projects/gB4fefq3).
+
+[![Build Status](https://travis-ci.org/erikvanzijst/eeprom.svg?branch=master)](https://travis-ci.org/erikvanzijst/eeprom)
