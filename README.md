@@ -17,7 +17,7 @@ This repository contains:
 Install [platformio](https://platformio.org) to compile and upload the firmware
 to the Arduino:
 
-    $ platformio run -target upload
+    $ platformio run --target upload
 
 Order the PCB either directly from
 [Oshpark](https://oshpark.com/shared_projects/gB4fefq3), or use the included
