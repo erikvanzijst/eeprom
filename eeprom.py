@@ -60,8 +60,17 @@ To dump the entire EEPROM to a file:
 To load a local file into the EEPROM:
 > [l|load] [filename]
 
-Send a reset command:
-> reset
+To test write/read with random nubers:
+> [t]est
+
+To protect the EEPROM:
+> [p]rotect
+
+To unprotect the EEPROM:
+> [u]nprotect
+
+Quit from program:
+> [q]uit
 
 Address supports hex (0xFF) and octal (0o7) notation.
 """
@@ -128,7 +137,6 @@ Address supports hex (0xFF) and octal (0o7) notation.
             print('\nComplete.', file=console)
 
         if size < 0x8000:
-            self.reset()
             # consume the remaining packet
             self._receive(ack=False)
 
@@ -159,9 +167,13 @@ Address supports hex (0xFF) and octal (0o7) notation.
         if console:
             print('\nComplete.', file=console)
 
-    def reset(self) -> None:
-        """Sends a reset command."""
-        self._send(pack('>c', b'r'))
+    def protect(self) -> None:
+        """Protect EEPROM."""
+        self._send(pack('>c', b'p'))
+
+    def unprotect(self) -> None:
+        """Unprotect EEPROM."""
+        self._send(pack('>c', b'u'))
 
     def _rnd(self):
         """returns a generator producing random ASCII data."""
@@ -223,7 +235,10 @@ Address supports hex (0xFF) and octal (0o7) notation.
                  'load': self.load,
                  't': self.test,
                  'test': self.test,
-                 'reset': self.reset,
+                 'p': self.protect,
+                 'protect': self.protect,
+                 'u': self.unprotect,
+                 'unprotect': self.unprotect,
                  'quit': self.quit,
                  'q': self.quit}[expr[0]](*expr[1:])
 
@@ -292,4 +307,4 @@ if __name__ == '__main__':
             atexit.register(readline.write_history_file, histfile)
             eeprom.repl()
     except (KeyboardInterrupt, BrokenPipeError):
-        eeprom.reset()
+        exit(1)

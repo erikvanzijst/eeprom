@@ -26,7 +26,7 @@
  *  A1 | EEPROM OE
  *  A2 | EEPROM CE
  * ----+--------------
- *  13 | Activity LED
+ *  10 | Activity LED
  * ----+--------------
  *  
  * Copyright 2019, Erik van Zijst <erik.van.zijst@gmail.com>
@@ -55,7 +55,7 @@ typedef enum {
 } error;
 
 const unsigned int MAX_PAYLOAD = 63;
-const unsigned int DELAY_US = 10;
+const unsigned int DELAY_US = 1;
 
 // AT28C256 contol lines
 const unsigned int EEPROM_WE = A0;
@@ -111,6 +111,59 @@ void setup() {
 
   pinMode(ACT_LED, OUTPUT);
   digitalWrite(ACT_LED, LOW);
+
+  standbyMode();
+}
+
+void quickWrite(unsigned int addr, byte val) {
+  PORTB &= ~B00001000;
+
+  for (int i = 0; i < 16; ++i) {
+    if (addr & 0x8000) {
+      PORTC |= B00010000;
+    } else {
+      PORTC &= ~B00010000;      
+    }
+    PORTB |= B00001000;
+    delayMicroseconds(3);
+    PORTB &= ~B00001000;
+    addr <<= 1;
+  }
+
+  PORTB = (PORTB & 0xfc) | (val >> 6);
+  PORTD = (PORTD & 0x03) | (val << 2);
+
+  PORTB &= ~B00010000;
+  delayMicroseconds(2);
+  PORTB |= B00010000;
+  delayMicroseconds(2);
+  PORTB &= ~B00010000;
+
+  delayMicroseconds(2);
+  PORTC &= ~B00000001;
+  delayMicroseconds(2);
+  PORTC |= B00000001;
+}
+
+void unprotect() {
+  writeMode();
+
+  quickWrite(0x5555, 0xAA);
+  quickWrite(0x2AAA, 0x55);
+  quickWrite(0x5555, 0x80);
+  quickWrite(0x5555, 0xAA);
+  quickWrite(0x2AAA, 0x55);
+  quickWrite(0x5555, 0x20);
+
+  standbyMode();
+}
+
+void protect() {
+  writeMode();
+
+  quickWrite(0x5555, 0xAA);
+  quickWrite(0x2AAA, 0x55);
+  quickWrite(0x5555, 0xA0);
 
   standbyMode();
 }
@@ -185,12 +238,11 @@ void pulse(int pin) {
  * Loads the specified 16 bit address into the 595 shift register.
  */
 void loadShiftAddr(unsigned int addr) {
+  delayMicroseconds(DELAY_US);
   for (int i = 15; i >= 0; i--) {
     digitalWrite(SHIFT_SER, ((addr >> i) & 1) ? HIGH : LOW);
-    delayMicroseconds(DELAY_US);
     pulse(SHIFT_SCLK);
   }
-  delayMicroseconds(DELAY_US);
   pulse(SHIFT_RCLK);
 }
 
@@ -299,13 +351,13 @@ int load(unsigned int len) {
  * Returns 0 on success, or -1 on error.
  */
 int writeMode() {
-  digitalWrite(EEPROM_CE, LOW);
-  digitalWrite(EEPROM_OE, HIGH);
-  digitalWrite(EEPROM_WE, HIGH);
-
   for (unsigned int i = 0; i < 8; i++) {
     pinMode(dataPins[i], OUTPUT);
   }
+
+  digitalWrite(EEPROM_CE, LOW);
+  digitalWrite(EEPROM_OE, HIGH);
+  digitalWrite(EEPROM_WE, HIGH);
 
   delayMicroseconds(DELAY_US);
   mode = WRITE;
@@ -388,8 +440,11 @@ void loop() {
             send(NULL, 0, false); // acknowledge cmd message
             load((buf[1] << 8) + buf[2]);
 
-        } else if (buf[0] == 0x72 && len == 1) {
-            // ignore reset command
+        } else if (buf[0] == 0x70 && len == 1) {
+            protect();
+
+        } else if (buf[0] == 0x75 && len == 1) {
+            unprotect();
 
         } else {
           errno = E_UNKNOWN;
